@@ -15,7 +15,7 @@ from .entity import IdegisEntity
 class IdegisSensor(IdegisEntity, SensorEntity):
     """Representation of an Idegis sensor."""
 
-    entity_description: SensorDescription
+    _description: SensorDescription
 
     def __init__(
         self,
@@ -24,7 +24,7 @@ class IdegisSensor(IdegisEntity, SensorEntity):
     ) -> None:
         coordinator = entry.runtime_data
         super().__init__(coordinator, entry, description.key, description.name)
-        self.entity_description = description
+        self._description = description
         self._attr_icon = description.icon
         self._attr_native_unit_of_measurement = description.native_unit_of_measurement
         self._attr_device_class = description.device_class
@@ -35,7 +35,7 @@ class IdegisSensor(IdegisEntity, SensorEntity):
     @property
     def native_value(self):
         """Return the current sensor value."""
-        return self.entity_description.value_fn(self.coordinator)
+        return self._description.value_fn(self.coordinator)
 
 
 async def async_setup_entry(

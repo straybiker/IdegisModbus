@@ -14,12 +14,12 @@ from .entity import IdegisEntity
 class IdegisNumber(IdegisEntity, NumberEntity):
     """Representation of an Idegis writable number."""
 
-    entity_description: NumberDescription
+    _description: NumberDescription
 
     def __init__(self, entry: ConfigEntry, description: NumberDescription) -> None:
         coordinator = entry.runtime_data
         super().__init__(coordinator, entry, description.key, description.name)
-        self.entity_description = description
+        self._description = description
         self._attr_native_min_value = description.min_value
         self._attr_native_max_value = description.max_value
         self._attr_native_step = description.step
@@ -29,14 +29,14 @@ class IdegisNumber(IdegisEntity, NumberEntity):
     @property
     def native_value(self) -> float | None:
         """Return the current value."""
-        value = self.entity_description.value_fn(self.coordinator)
+        value = self._description.value_fn(self.coordinator)
         return None if value is None else float(value)
 
     async def async_set_native_value(self, value: float) -> None:
         """Write the target register."""
-        register_value = round(value * self.entity_description.multiplier)
+        register_value = round(value * self._description.multiplier)
         await self.coordinator.async_set_holding_value(
-            self.entity_description.write_address, int(register_value)
+            self._description.write_address, int(register_value)
         )
 
 

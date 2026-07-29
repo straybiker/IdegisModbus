@@ -15,12 +15,12 @@ from .entity import IdegisEntity
 class IdegisBinarySensor(IdegisEntity, BinarySensorEntity):
     """Representation of an Idegis binary sensor."""
 
-    entity_description: BinarySensorDescription
+    _description: BinarySensorDescription
 
     def __init__(self, entry: ConfigEntry, description: BinarySensorDescription) -> None:
         coordinator = entry.runtime_data
         super().__init__(coordinator, entry, description.key, description.name)
-        self.entity_description = description
+        self._description = description
         self._attr_icon = description.icon
         self._attr_device_class = description.device_class
         self._attr_entity_category = description.entity_category
@@ -29,7 +29,7 @@ class IdegisBinarySensor(IdegisEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return the current binary sensor state."""
-        return self.entity_description.value_fn(self.coordinator)
+        return self._description.value_fn(self.coordinator)
 
 
 def _is_enabled(entry: ConfigEntry, description: BinarySensorDescription) -> bool:

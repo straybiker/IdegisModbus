@@ -26,6 +26,7 @@ class IdegisEntity(CoordinatorEntity[IdegisModbusCoordinator]):
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{unique_key}"
         self._attr_name = name
+        self._attr_entity_registry_visible_default = True
 
     @property
     def device_info(self) -> DeviceInfo:

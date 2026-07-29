@@ -73,7 +73,11 @@ class IdegisModbusClient:
 
             assert self._client is not None
             method = getattr(self._client, method_name)
-            response = await method(*args, slave=self.slave, **kwargs)
+            try:
+                response = await method(*args, device_id=self.slave, **kwargs)
+            except TypeError:
+                # pymodbus < 3.10 uses 'slave=' instead of 'device_id='
+                response = await method(*args, slave=self.slave, **kwargs)
             self._last_request = monotonic()
 
             if response is None:
