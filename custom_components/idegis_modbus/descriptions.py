@@ -95,6 +95,20 @@ def _scaled_holding(address: int, scale: float) -> NumericValueFn:
     )
 
 
+def _input_mask(address: int, mask: int) -> BoolValueFn:
+    """True when any masked bit of an input register is set.
+
+    The alarm words carry several causes each. Masking to the bits the v1.63
+    register table documents as implemented stops an undocumented bit from
+    raising a false alarm.
+    """
+    return lambda coordinator: (
+        None
+        if coordinator.get_input(address) is None
+        else bool(coordinator.get_input(address) & mask)
+    )
+
+
 SWITCH_DESCRIPTIONS = (
     SwitchDescription("pool_pump", "Pool Pump"),
     SwitchDescription("relay_square", "Relay Square"),
@@ -371,6 +385,42 @@ BINARY_SENSOR_DESCRIPTIONS = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         feature_group="diagnostic",
+    ),
+    # Alarm words 0x25/0x27/0x28/0x29 arrive inside the 0x24-0x2A read, so
+    # these cost no extra Modbus traffic. Each mask covers exactly the bits
+    # the v1.63 register table marks as implemented.
+    BinarySensorDescription(
+        "electrolysis_alarm",
+        "Electrolysis Alarm",
+        # bit 0 check_cell, bit 1 low_conductivity, bit 2 high_conductivity
+        _input_mask(0x25, 0b0000_0111),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:flash-alert",
+    ),
+    BinarySensorDescription(
+        "chlorine_alarm",
+        "Chlorine Alarm",
+        # bits 0-5 low/high ORP, PPM and probe mA; bits 6-9 tank, pumpstop,
+        # blown fuse and pump maintenance
+        _input_mask(0x27, 0b0011_1111_1111),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:flask-outline",
+    ),
+    BinarySensorDescription(
+        "temperature_alarm",
+        "Temperature Alarm",
+        # bit 0 low_temperature, bit 1 high_temperature
+        _input_mask(0x28, 0b0000_0011),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:thermometer-alert",
+    ),
+    BinarySensorDescription(
+        "salt_alarm",
+        "Salt Alarm",
+        # bit 0 low_salt, bit 1 high_salt
+        _input_mask(0x29, 0b0000_0011),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:shaker-outline",
     ),
     BinarySensorDescription(
         "ph_tank_input",
