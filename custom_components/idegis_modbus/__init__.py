@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TIMEOUT
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 
 from .client import IdegisModbusClient
 from .const import (
@@ -25,6 +26,11 @@ from .coordinator import IdegisModbusCoordinator
 LOGGER = logging.getLogger(__name__)
 
 type IdegisConfigEntry = ConfigEntry[IdegisModbusCoordinator]
+
+# async_setup exists only to register the force_refresh service. The
+# integration is set up from a config entry, so declare that YAML config for
+# the domain is unsupported. HA then warns the user to remove it.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
