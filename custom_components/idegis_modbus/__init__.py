@@ -6,7 +6,7 @@ import logging
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TIMEOUT
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -32,9 +32,15 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     async def async_force_refresh(call: ServiceCall) -> None:
-        entries: list[IdegisConfigEntry] = list(hass.config_entries.async_entries(DOMAIN))
+        # Only loaded entries have runtime_data. Touching an entry that failed
+        # to set up raises AttributeError and kills the whole service call.
+        entries: list[IdegisConfigEntry] = [
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+        ]
         if not entries:
-            raise HomeAssistantError("No Idegis Modbus entries configured")
+            raise HomeAssistantError("No loaded Idegis Modbus entries")
 
         for entry in entries:
             await entry.runtime_data.async_request_refresh()
@@ -66,7 +72,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: IdegisConfigEntry) -> bo
         name=entry.title,
         scan_interval=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        # A failed setup never reaches async_unload_entry, so close the socket
+        # here. HA retries setup on a backoff and would otherwise leak one
+        # connection per attempt.
+        await client.async_close()
+        raise
 
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
