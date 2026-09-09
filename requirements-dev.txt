@@ -1,0 +1,14 @@
+# Development and CI dependencies.
+#
+# The integration's own runtime requirement lives in
+# custom_components/idegis_modbus/manifest.json. This file is only for
+# running the test suite.
+#
+# homeassistant is deliberately left unpinned. This integration's main
+# failure mode is Home Assistant API drift, so CI should go red when an
+# upstream release breaks it rather than hide that behind a pin. Note that
+# current Home Assistant needs Python 3.14 or newer.
+homeassistant>=2026.9
+pymodbus>=3.6.9,<4.0.0
+pytest>=8
+pytest-asyncio>=0.24
