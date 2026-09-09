@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import timedelta
 import logging
+from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import IdegisModbusClient, IdegisModbusError
@@ -108,10 +111,30 @@ class IdegisModbusCoordinator(DataUpdateCoordinator[IdegisData]):
             return None
         return low | (high << 16)
 
+    async def _async_write(
+        self,
+        action: str,
+        coro: Coroutine[Any, Any, None],
+    ) -> None:
+        """Run a write, translate Modbus errors, then refresh.
+
+        HomeAssistantError renders as a readable message in the UI. A raw
+        IdegisModbusError surfaces as "unknown error".
+        """
+        try:
+            await coro
+        except IdegisModbusError as err:
+            raise HomeAssistantError(f"Idegis Modbus {action} failed: {err}") from err
+        await self.async_request_refresh()
+
     async def async_set_relay(self, relay_key: str, is_on: bool) -> None:
         """Write a relay state and refresh."""
-        await self.client.async_write_relay_state(OUTPUT_SWITCH_REGISTERS[relay_key], is_on)
-        await self.async_request_refresh()
+        await self._async_write(
+            f"relay write for {relay_key}",
+            self.client.async_write_relay_state(
+                OUTPUT_SWITCH_REGISTERS[relay_key], is_on
+            ),
+        )
 
     def get_relay_state(self, relay_key: str) -> bool | None:
         """Return the current relay state from the input status register."""
@@ -119,15 +142,21 @@ class IdegisModbusCoordinator(DataUpdateCoordinator[IdegisData]):
 
     async def async_set_holding_value(self, address: int, value: int) -> None:
         """Write a holding register and refresh."""
-        await self.client.async_write_register(address, value)
-        await self.async_request_refresh()
+        await self._async_write(
+            f"write of 0x{address:X}",
+            self.client.async_write_register(address, value),
+        )
 
     async def async_set_holding_bit(self, address: int, bit: int, is_on: bool) -> None:
         """Write one bit in a holding register and refresh."""
-        await self.client.async_write_register_bit(address, bit, is_on)
-        await self.async_request_refresh()
+        await self._async_write(
+            f"bit write of 0x{address:X}.{bit}",
+            self.client.async_write_register_bit(address, bit, is_on),
+        )
 
     async def async_press_button(self, address: int, bit: int) -> None:
         """Press a pulse-style maintenance action."""
-        await self.client.async_write_register_bit_pulse(address, bit)
-        await self.async_request_refresh()
+        await self._async_write(
+            f"pulse of 0x{address:X}.{bit}",
+            self.client.async_write_register_bit_pulse(address, bit),
+        )

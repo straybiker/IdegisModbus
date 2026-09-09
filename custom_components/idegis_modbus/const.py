@@ -48,9 +48,10 @@ class RegisterBlock:
 
 
 INPUT_BLOCKS: Final = (
-    RegisterBlock(0x24, 1),
-    RegisterBlock(0x26, 1),
-    RegisterBlock(0x2A, 1),
+    # 0x24-0x2A is the contiguous alarm region documented in the v1.63 register
+    # table: Flow, Electrolysis, PH, CL, Temp, Salt, UV reset. One read instead
+    # of three. 0x25 and 0x27-0x29 are implemented but not yet exposed.
+    RegisterBlock(0x24, 7),
     RegisterBlock(0x40, 14),
     RegisterBlock(0x51, 1),
     RegisterBlock(0x56, 6),
@@ -64,14 +65,16 @@ INPUT_BLOCKS: Final = (
     RegisterBlock(0x110, 7),
 )
 
+# Every block costs one Modbus round trip plus one message_wait_ms gap, so
+# merge where possible. Only merge across addresses the v1.63 register table
+# documents as implemented: a range covering an unimplemented register can be
+# rejected with an ILLEGAL DATA ADDRESS exception, failing the whole read.
 HOLDING_BLOCKS: Final = (
     RegisterBlock(0x06, 1),
     RegisterBlock(0x0D, 1),
     RegisterBlock(0x41, 2),
-    RegisterBlock(0x56, 1),
-    RegisterBlock(0x57, 1),
+    RegisterBlock(0x56, 2),
     RegisterBlock(0x87, 2),
-    RegisterBlock(0xD6, 1),
 )
 
 OUTPUT_SWITCH_REGISTERS: Final = {

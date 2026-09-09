@@ -6,10 +6,11 @@ import logging
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_TIMEOUT
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 
 from .client import IdegisModbusClient
 from .const import (
@@ -26,15 +27,26 @@ LOGGER = logging.getLogger(__name__)
 
 type IdegisConfigEntry = ConfigEntry[IdegisModbusCoordinator]
 
+# async_setup exists only to register the force_refresh service. The
+# integration is set up from a config entry, so declare that YAML config for
+# the domain is unsupported. HA then warns the user to remove it.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the integration from yaml (not supported)."""
     hass.data.setdefault(DOMAIN, {})
 
     async def async_force_refresh(call: ServiceCall) -> None:
-        entries: list[IdegisConfigEntry] = list(hass.config_entries.async_entries(DOMAIN))
+        # Only loaded entries have runtime_data. Touching an entry that failed
+        # to set up raises AttributeError and kills the whole service call.
+        entries: list[IdegisConfigEntry] = [
+            entry
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+        ]
         if not entries:
-            raise HomeAssistantError("No Idegis Modbus entries configured")
+            raise HomeAssistantError("No loaded Idegis Modbus entries")
 
         for entry in entries:
             await entry.runtime_data.async_request_refresh()
@@ -66,7 +78,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: IdegisConfigEntry) -> bo
         name=entry.title,
         scan_interval=entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
     )
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except Exception:
+        # A failed setup never reaches async_unload_entry, so close the socket
+        # here. HA retries setup on a backoff and would otherwise leak one
+        # connection per attempt.
+        await client.async_close()
+        raise
 
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))

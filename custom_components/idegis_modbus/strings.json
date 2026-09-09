@@ -27,6 +27,7 @@
       }
     },
     "error": {
+      "already_configured": "Another entry already uses this host, port and slave.",
       "cannot_connect": "Failed to connect to the Modbus bridge.",
       "unknown": "Unexpected error."
     },

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, time
 from typing import Callable
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 from homeassistant.const import EntityCategory
+from homeassistant.util import dt as dt_util
 
 from .coordinator import IdegisModbusCoordinator
 
 
 NumericValueFn = Callable[[IdegisModbusCoordinator], int | float | None]
+SensorValueFn = Callable[[IdegisModbusCoordinator], int | float | datetime | None]
 BoolValueFn = Callable[[IdegisModbusCoordinator], bool | None]
 
 
@@ -20,7 +23,7 @@ BoolValueFn = Callable[[IdegisModbusCoordinator], bool | None]
 class SensorDescription:
     key: str
     name: str
-    value_fn: NumericValueFn
+    value_fn: SensorValueFn
     icon: str | None = None
     native_unit_of_measurement: str | None = None
     device_class: SensorDeviceClass | None = None
@@ -92,6 +95,57 @@ def _scaled_holding(address: int, scale: float) -> NumericValueFn:
         None
         if coordinator.get_holding(address) is None
         else round(coordinator.get_holding(address) * scale, 2)
+    )
+
+
+def _packed_time(address: int) -> SensorValueFn:
+    """Decode a packed clock time from an input register.
+
+    The v1.63 register table calls 0xF0 and 0xF1 "HHMM (hora/minuto)", but the
+    hour sits in the LOW byte and the minute in the high byte. Read as a plain
+    integer the register looks like nonsense: 20:09 arrives as 2324.
+
+    Reports what the controller believes, which is what drives its own
+    scheduling. It is deliberately not corrected towards astronomical truth --
+    Home Assistant already knows the real sunrise from the configured home
+    coordinates via sun.sun.
+
+    The register carries only an hour and a minute, so today's local date is
+    attached. The controller does not recompute at midnight: shortly after
+    00:00 these registers still hold the previous day's times, which differ by
+    a couple of minutes at this latitude. Treat the value as "the controller's
+    current idea of sunrise", not as an almanac entry for today.
+    """
+
+    def value(coordinator: IdegisModbusCoordinator) -> datetime | None:
+        raw = coordinator.get_input(address)
+        # Both registers are volatile with a factory default of 0, so zero
+        # means the controller has not computed a time yet.
+        if not raw:
+            return None
+        hour, minute = raw & 0xFF, (raw >> 8) & 0xFF
+        if hour > 23 or minute > 59:
+            return None
+        # Attach the zone to a naive wall-clock time so zoneinfo picks the
+        # right offset. Adding a timedelta to local midnight would drift by an
+        # hour on the two daylight-saving transition days.
+        naive = datetime.combine(dt_util.now().date(), time(hour, minute))
+        return naive.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+
+    return value
+
+
+def _input_mask(address: int, mask: int) -> BoolValueFn:
+    """True when any masked bit of an input register is set.
+
+    The alarm words carry several causes each. Masking to the bits the v1.63
+    register table documents as implemented stops an undocumented bit from
+    raising a false alarm.
+    """
+    return lambda coordinator: (
+        None
+        if coordinator.get_input(address) is None
+        else bool(coordinator.get_input(address) & mask)
     )
 
 
@@ -334,21 +388,17 @@ SENSOR_DESCRIPTIONS = (
     ),
     SensorDescription(
         "sunrise",
-        "Sunrise Raw",
-        lambda coordinator: coordinator.get_input(0xF0),
+        "Sunrise",
+        _packed_time(0xF0),
         icon="mdi:weather-sunset-up",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        enabled_default=False,
-        feature_group="diagnostic",
+        device_class=SensorDeviceClass.TIMESTAMP,
     ),
     SensorDescription(
         "sunset",
-        "Sunset Raw",
-        lambda coordinator: coordinator.get_input(0xF1),
+        "Sunset",
+        _packed_time(0xF1),
         icon="mdi:weather-sunset-down",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        enabled_default=False,
-        feature_group="diagnostic",
+        device_class=SensorDeviceClass.TIMESTAMP,
     ),
 )
 
@@ -371,6 +421,42 @@ BINARY_SENSOR_DESCRIPTIONS = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         feature_group="diagnostic",
+    ),
+    # Alarm words 0x25/0x27/0x28/0x29 arrive inside the 0x24-0x2A read, so
+    # these cost no extra Modbus traffic. Each mask covers exactly the bits
+    # the v1.63 register table marks as implemented.
+    BinarySensorDescription(
+        "electrolysis_alarm",
+        "Electrolysis Alarm",
+        # bit 0 check_cell, bit 1 low_conductivity, bit 2 high_conductivity
+        _input_mask(0x25, 0b0000_0111),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:flash-alert",
+    ),
+    BinarySensorDescription(
+        "chlorine_alarm",
+        "Chlorine Alarm",
+        # bits 0-5 low/high ORP, PPM and probe mA; bits 6-9 tank, pumpstop,
+        # blown fuse and pump maintenance
+        _input_mask(0x27, 0b0011_1111_1111),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:flask-outline",
+    ),
+    BinarySensorDescription(
+        "temperature_alarm",
+        "Temperature Alarm",
+        # bit 0 low_temperature, bit 1 high_temperature
+        _input_mask(0x28, 0b0000_0011),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:thermometer-alert",
+    ),
+    BinarySensorDescription(
+        "salt_alarm",
+        "Salt Alarm",
+        # bit 0 low_salt, bit 1 high_salt
+        _input_mask(0x29, 0b0000_0011),
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        icon="mdi:shaker-outline",
     ),
     BinarySensorDescription(
         "ph_tank_input",
