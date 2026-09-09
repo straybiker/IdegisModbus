@@ -27,6 +27,7 @@
       }
     },
     "error": {
+      "already_configured": "Otra entrada ya usa este host, puerto y esclavo.",
       "cannot_connect": "No se ha podido conectar con el bridge Modbus.",
       "unknown": "Error inesperado."
     },

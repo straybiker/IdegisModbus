@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -32,6 +33,15 @@ from .const import (
     DOMAIN,
 )
 
+LOGGER = logging.getLogger(__name__)
+
+# Bounded so a bad value cannot flood the RS-485 bus or stall every poll.
+PORT_RANGE = vol.All(vol.Coerce(int), vol.Range(min=1, max=65535))
+SLAVE_RANGE = vol.All(vol.Coerce(int), vol.Range(min=1, max=247))
+TIMEOUT_RANGE = vol.All(vol.Coerce(int), vol.Range(min=1, max=60))
+MESSAGE_WAIT_RANGE = vol.All(vol.Coerce(int), vol.Range(min=0, max=5000))
+SCAN_INTERVAL_RANGE = vol.All(vol.Coerce(int), vol.Range(min=5, max=3600))
+
 
 def _user_schema(user_input: dict[str, Any] | None = None) -> vol.Schema:
     """Build the config flow schema."""
@@ -40,17 +50,26 @@ def _user_schema(user_input: dict[str, Any] | None = None) -> vol.Schema:
         {
             vol.Required(CONF_NAME, default=user_input.get(CONF_NAME, DEFAULT_NAME)): str,
             vol.Required(CONF_HOST, default=user_input.get(CONF_HOST, "")): str,
-            vol.Required(CONF_PORT, default=user_input.get(CONF_PORT, DEFAULT_PORT)): int,
-            vol.Required(CONF_SLAVE, default=user_input.get(CONF_SLAVE, DEFAULT_SLAVE)): int,
+            vol.Required(
+                CONF_PORT, default=user_input.get(CONF_PORT, DEFAULT_PORT)
+            ): PORT_RANGE,
+            vol.Required(
+                CONF_SLAVE, default=user_input.get(CONF_SLAVE, DEFAULT_SLAVE)
+            ): SLAVE_RANGE,
             vol.Required(
                 CONF_TIMEOUT, default=user_input.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
-            ): int,
+            ): TIMEOUT_RANGE,
             vol.Required(
                 CONF_MESSAGE_WAIT_MS,
                 default=user_input.get(CONF_MESSAGE_WAIT_MS, DEFAULT_MESSAGE_WAIT_MS),
-            ): int,
+            ): MESSAGE_WAIT_RANGE,
         }
     )
+
+
+def _unique_id(data: dict[str, Any]) -> str:
+    """Build the entry unique id from the connection details."""
+    return f"{data[CONF_HOST]}:{data[CONF_PORT]}:{data[CONF_SLAVE]}"
 
 
 def _options_schema(options: dict[str, Any] | None = None) -> vol.Schema:
@@ -61,7 +80,7 @@ def _options_schema(options: dict[str, Any] | None = None) -> vol.Schema:
             vol.Required(
                 CONF_SCAN_INTERVAL,
                 default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-            ): int,
+            ): SCAN_INTERVAL_RANGE,
             vol.Required(
                 CONF_ENABLE_UV, default=options.get(CONF_ENABLE_UV, DEFAULT_ENABLE_UV)
             ): bool,
@@ -108,16 +127,15 @@ class IdegisModbusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle the initial step."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            unique_id = (
-                f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}:{user_input[CONF_SLAVE]}"
-            )
-            await self.async_set_unique_id(unique_id)
+            await self.async_set_unique_id(_unique_id(user_input))
             self._abort_if_unique_id_configured()
             try:
                 await _validate_connection(user_input)
-            except IdegisModbusError:
+            except IdegisModbusError as err:
+                LOGGER.debug("Connection validation failed: %s", err)
                 errors["base"] = "cannot_connect"
             except Exception:
+                LOGGER.exception("Unexpected error validating the Idegis connection")
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(
@@ -149,20 +167,33 @@ class IdegisModbusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         defaults = {**entry.data, CONF_NAME: entry.title}
 
         if user_input is not None:
-            try:
-                await _validate_connection(user_input)
-            except IdegisModbusError:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                errors["base"] = "unknown"
+            unique_id = _unique_id(user_input)
+            collides = any(
+                other.entry_id != entry.entry_id and other.unique_id == unique_id
+                for other in self.hass.config_entries.async_entries(DOMAIN)
+            )
+            if collides:
+                errors["base"] = "already_configured"
             else:
-                self.hass.config_entries.async_update_entry(
-                    entry,
-                    title=user_input[CONF_NAME],
-                    data=user_input,
-                )
-                await self.hass.config_entries.async_reload(entry.entry_id)
-                return self.async_abort(reason="reconfigure_successful")
+                try:
+                    await _validate_connection(user_input)
+                except IdegisModbusError as err:
+                    LOGGER.debug("Connection validation failed: %s", err)
+                    errors["base"] = "cannot_connect"
+                except Exception:
+                    LOGGER.exception(
+                        "Unexpected error validating the Idegis connection"
+                    )
+                    errors["base"] = "unknown"
+                else:
+                    await self.async_set_unique_id(unique_id)
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        title=user_input[CONF_NAME],
+                        data=user_input,
+                    )
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+                    return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
             step_id="reconfigure",

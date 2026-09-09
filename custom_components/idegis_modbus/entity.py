@@ -31,11 +31,12 @@ class IdegisEntity(CoordinatorEntity[IdegisModbusCoordinator]):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device metadata."""
+        # No configuration_url: the Modbus TCP gateway serves no web UI, and
+        # embedding the host here leaks it into diagnostics that redact it.
         return DeviceInfo(
             identifiers={(DOMAIN, self._entry.entry_id)},
             manufacturer=MANUFACTURER,
             model=MODEL,
             name=self._entry.title,
-            configuration_url=f"http://{self._entry.data['host']}:{self._entry.data['port']}",
         )
 
